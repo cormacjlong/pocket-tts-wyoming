@@ -133,9 +133,8 @@ class PocketTTSEventHandler(AsyncEventHandler):
         self, synthesize: Synthesize, send_start: bool = True, send_stop: bool = True
     ) -> bool:
         """Handle synthesis request."""
-        # FIXED: Global declaration moved to top of function
         global _VOICE_STATES
-        
+
         _LOGGER.debug(synthesize)
 
         raw_text = synthesize.text
@@ -329,7 +328,6 @@ class PocketTTSEventHandler(AsyncEventHandler):
 
 async def main() -> None:
     """Main entry point."""
-    # FIXED: Global declaration moved to top of function
     global _VOICE_STATES
 
     parser = argparse.ArgumentParser(
@@ -420,8 +418,9 @@ async def main() -> None:
 
     # Load Custom Voices
     if os.path.isdir(CUSTOM_VOICES_DIR):
-        wav_files = glob.glob(os.path.join(CUSTOM_VOICES_DIR, "*.wav"))
-        _LOGGER.info("Found %d custom voice files in %s", len(wav_files), CUSTOM_VOICES_DIR)
+        # Recursive search for .wav files
+        wav_files = glob.glob(os.path.join(CUSTOM_VOICES_DIR, "**", "*.wav"), recursive=True)
+        _LOGGER.info("Found %d custom voice files in %s (recursive search)", len(wav_files), CUSTOM_VOICES_DIR)
         
         for wav_path in wav_files:
             try:

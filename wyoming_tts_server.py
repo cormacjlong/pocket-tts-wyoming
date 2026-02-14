@@ -8,6 +8,7 @@ exposing available voices to Home Assistant for selection.
 
 import argparse
 import asyncio
+import glob
 import logging
 import os
 import wave
@@ -39,6 +40,7 @@ DEFAULT_PORT = int(os.environ.get("WYOMING_PORT", "10201"))
 DEFAULT_VOICE = os.environ.get("DEFAULT_VOICE", "alba")
 MODEL_VARIANT = os.environ.get("MODEL_VARIANT", DEFAULT_VARIANT)
 DEBUG_WAV = os.environ.get("DEBUG_WAV", "").lower() in ("true", "1", "yes")
+CUSTOM_VOICES_DIR = os.environ.get("CUSTOM_VOICES_DIR", "/custom_voices")
 
 # Prefix trimming tunables (in seconds)
 # Minimum time before looking for the pause after the sacrificial prefix
@@ -160,7 +162,9 @@ class PocketTTSEventHandler(AsyncEventHandler):
         if voice_name and voice_name.startswith("pocket-tts-"):
             voice_name = voice_name.replace("pocket-tts-", "", 1)
 
-        if voice_name not in PREDEFINED_VOICES:
+        # Check if voice exists in our loaded state (which now includes custom voices)
+        # Note: We use _VOICE_STATES here instead of PREDEFINED_VOICES to support custom ones
+        if voice_name not in _VOICE_STATES and voice_name not in PREDEFINED_VOICES:
             _LOGGER.warning(
                 "Voice '%s' not found, using default '%s'", voice_name, self.cli_args.voice
             )
@@ -170,6 +174,8 @@ class PocketTTSEventHandler(AsyncEventHandler):
 
         async with _VOICE_LOCK:
             global _VOICE_STATES
+            
+            # If it's a built-in voice that hasn't been loaded yet (and isn't custom overridden), load it now
             if voice_name not in _VOICE_STATES:
                 _LOGGER.info("Loading voice state for: %s", voice_name)
                 try:
@@ -397,36 +403,62 @@ async def main() -> None:
     os.environ["MODEL_VARIANT"] = args.variant
     variant = os.environ.get("MODEL_VARIANT", MODEL_VARIANT)
     _LOGGER.info("Loading Pocket-TTS model (variant: %s)...", variant)
-    tts_model = TTSModel.load_model() # <--- FIXED: Argument removed
+    tts_model = TTSModel.load_model()
     _LOGGER.info("Model loaded successfully")
     _LOGGER.info("Sample rate: %d Hz", tts_model.sample_rate)
 
-    _LOGGER.info("Pre-loading voice states for %d voices...", len(PREDEFINED_VOICES))
+    _LOGGER.info("Pre-loading voice states for built-in voices...")
     for voice_name in PREDEFINED_VOICES:
         try:
             voice_state = tts_model.get_state_for_audio_prompt(voice_name)
             global _VOICE_STATES
             _VOICE_STATES[voice_name] = voice_state
-            _LOGGER.info("Loaded voice state for: %s", voice_name)
+            _LOGGER.info("Loaded built-in voice: %s", voice_name)
         except Exception as e:
             _LOGGER.warning("Failed to load voice state for %s: %s", voice_name, e)
-    _LOGGER.info("Voice states pre-loaded")
 
-    voices = [
-        TtsVoice(
-            name=voice_name,
-            description=f"Pocket-TTS voice: {voice_name}",
-            attribution=Attribution(
-                name="Kyutai Pocket-TTS",
-                url="https://github.com/kyutai-labs/pocket-tts",
-            ),
-            installed=True,
-            version=None,
-            languages=["en"],
-            speakers=None,
+    # Load Custom Voices
+    if os.path.isdir(CUSTOM_VOICES_DIR):
+        wav_files = glob.glob(os.path.join(CUSTOM_VOICES_DIR, "*.wav"))
+        _LOGGER.info("Found %d custom voice files in %s", len(wav_files), CUSTOM_VOICES_DIR)
+        
+        for wav_path in wav_files:
+            try:
+                # filename "patrick.wav" -> voice name "patrick"
+                voice_name = os.path.splitext(os.path.basename(wav_path))[0]
+                
+                _LOGGER.info("Processing custom voice '%s' from %s ...", voice_name, wav_path)
+                
+                # Pocket-TTS accepts a file path for cloning
+                voice_state = tts_model.get_state_for_audio_prompt(wav_path)
+                
+                _VOICE_STATES[voice_name] = voice_state
+                _LOGGER.info("Loaded custom voice: %s", voice_name)
+            except Exception as e:
+                _LOGGER.error("Failed to load custom voice from %s: %s", wav_path, e)
+    else:
+        _LOGGER.info("Custom voice directory not found: %s", CUSTOM_VOICES_DIR)
+
+    _LOGGER.info("Voice states loaded. Total: %d", len(_VOICE_STATES))
+
+    voices = []
+    # Sort voices so they appear nicely in UI
+    for voice_name in sorted(_VOICE_STATES.keys()):
+        is_builtin = voice_name in PREDEFINED_VOICES
+        voices.append(
+            TtsVoice(
+                name=voice_name,
+                description=f"Pocket-TTS {'Built-in' if is_builtin else 'Custom'}: {voice_name}",
+                attribution=Attribution(
+                    name="Kyutai Pocket-TTS",
+                    url="https://github.com/kyutai-labs/pocket-tts",
+                ),
+                installed=True,
+                version=None,
+                languages=["en"],
+                speakers=None,
+            )
         )
-        for voice_name in PREDEFINED_VOICES
-    ]
 
     wyoming_info = Info(
         tts=[
@@ -438,7 +470,7 @@ async def main() -> None:
                     url="https://github.com/kyutai-labs/pocket-tts",
                 ),
                 installed=True,
-                voices=sorted(voices, key=lambda v: v.name),
+                voices=voices,
                 version="1.0.1",
                 supports_synthesize_streaming=True,
             )
@@ -479,10 +511,10 @@ async def main() -> None:
         )
         await hass_zeroconf.register_server()
         _LOGGER.debug("Zeroconf discovery enabled: name=%s, port=%d, host=%s", 
-                     zeroconf_name, tcp_server.port, zeroconf_host)
+                      zeroconf_name, tcp_server.port, zeroconf_host)
 
     _LOGGER.info("Ready")
-    _LOGGER.info("Available voices: %s", ", ".join(PREDEFINED_VOICES.keys()))
+    _LOGGER.info("Available voices: %s", ", ".join(sorted(_VOICE_STATES.keys())))
     await server.run(
         partial(
             PocketTTSEventHandler,

@@ -133,6 +133,9 @@ class PocketTTSEventHandler(AsyncEventHandler):
         self, synthesize: Synthesize, send_start: bool = True, send_stop: bool = True
     ) -> bool:
         """Handle synthesis request."""
+        # FIXED: Global declaration moved to top of function
+        global _VOICE_STATES
+        
         _LOGGER.debug(synthesize)
 
         raw_text = synthesize.text
@@ -162,8 +165,7 @@ class PocketTTSEventHandler(AsyncEventHandler):
         if voice_name and voice_name.startswith("pocket-tts-"):
             voice_name = voice_name.replace("pocket-tts-", "", 1)
 
-        # Check if voice exists in our loaded state (which now includes custom voices)
-        # Note: We use _VOICE_STATES here instead of PREDEFINED_VOICES to support custom ones
+        # Check if voice exists in our loaded state
         if voice_name not in _VOICE_STATES and voice_name not in PREDEFINED_VOICES:
             _LOGGER.warning(
                 "Voice '%s' not found, using default '%s'", voice_name, self.cli_args.voice
@@ -173,9 +175,7 @@ class PocketTTSEventHandler(AsyncEventHandler):
         assert voice_name is not None
 
         async with _VOICE_LOCK:
-            global _VOICE_STATES
-            
-            # If it's a built-in voice that hasn't been loaded yet (and isn't custom overridden), load it now
+            # If it's a built-in voice that hasn't been loaded yet
             if voice_name not in _VOICE_STATES:
                 _LOGGER.info("Loading voice state for: %s", voice_name)
                 try:
@@ -232,7 +232,6 @@ class PocketTTSEventHandler(AsyncEventHandler):
                 full_audio = numpy.concatenate(all_audio_arrays)
 
                 # Find and remove the sacrificial prefix ("...") by detecting the pause after it
-                # This adapts to different voice speeds rather than using a fixed duration
                 silence_threshold = 0.01
                 max_amplitude = numpy.abs(full_audio).max()
                 threshold = max_amplitude * silence_threshold
@@ -330,6 +329,9 @@ class PocketTTSEventHandler(AsyncEventHandler):
 
 async def main() -> None:
     """Main entry point."""
+    # FIXED: Global declaration moved to top of function
+    global _VOICE_STATES
+
     parser = argparse.ArgumentParser(
         description="Wyoming Protocol TTS Server for Pocket-TTS"
     )
@@ -411,7 +413,6 @@ async def main() -> None:
     for voice_name in PREDEFINED_VOICES:
         try:
             voice_state = tts_model.get_state_for_audio_prompt(voice_name)
-            global _VOICE_STATES
             _VOICE_STATES[voice_name] = voice_state
             _LOGGER.info("Loaded built-in voice: %s", voice_name)
         except Exception as e:

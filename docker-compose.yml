@@ -1,6 +1,5 @@
 services:
   pocket-tts-wyoming:
-    #image: ghcr.io/ikidd/pocket-tts-wyoming:latest
     build: .
     container_name: pocket-tts-wyoming
     network_mode: host
@@ -9,6 +8,7 @@ services:
       - WYOMING_HOST=0.0.0.0
       - DEFAULT_VOICE=alba
       - ZEROCONF=pocket-tts
+      - HF_TOKEN
     restart: unless-stopped
     volumes:
       - pocket-tts-hf-cache:/root/.cache/huggingface
